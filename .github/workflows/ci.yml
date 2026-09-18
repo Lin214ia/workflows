@@ -1,0 +1,68 @@
+# The gate on this repository. Four repos pin `@main` here, so a merge that
+# breaks a workflow file breaks all of them at once — that is the trade-off the
+# README states, and this job is the half that makes it affordable.
+#
+# `ubuntu-latest`: public repository, so hosted minutes are free here.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+env:
+  # Pinned release of actionlint, with the checksum of the asset that is
+  # downloaded. A floating version would change what this gate means without any
+  # change to this repository.
+  ACTIONLINT_VERSION: 1.7.12
+  ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+
+jobs:
+  lint:
+    name: actionlint + shellcheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install actionlint (pinned, checksum-verified)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          asset="actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          url="https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/${asset}"
+          curl -fsSL --retry 3 -o "$asset" "$url"
+          echo "${ACTIONLINT_SHA256}  ${asset}" | sha256sum --check --strict -
+          tar -xzf "$asset" actionlint
+          install -m 0755 actionlint /usr/local/bin/actionlint
+          actionlint --version
+
+      - name: shellcheck is present (actionlint shells out to it for every script)
+        run: |
+          set -euo pipefail
+          # actionlint reports a missing shellcheck as a warning, not an error, so
+          # without this the `run:` scripts would go unchecked and CI would still
+          # be green. Fail instead.
+          shellcheck --version
+
+      - name: actionlint
+        run: |
+          set -euo pipefail
+          actionlint -color
+
+  test:
+    name: workflow shell tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: jq is present (the test stubs use it)
+        run: jq --version
+
+      - name: Run the tests
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s tests -v

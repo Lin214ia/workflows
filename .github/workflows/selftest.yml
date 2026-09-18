@@ -1,0 +1,26 @@
+# This repository's own caller of the workflow it publishes.
+#
+# Why it exists: every consumer repo pins `@main`, so a bad merge here breaks all
+# of them at once. The unit tests execute the step shells; this executes the
+# whole thing the way a consumer does — the `workflow_call` interface, the
+# `fromJSON(inputs.runs-on)` runner resolution, the label short-circuit — on
+# every PR to this repo. A resolution error shows up here as a startup_failure
+# before it shows up in four other repositories.
+#
+# `ubuntu-latest`: this repository is public, so GitHub-hosted minutes are free
+# here. Consumers pass their own labels.
+name: Self-test
+
+on:
+  pull_request:
+    types: [auto_merge_enabled, labeled, opened, reopened, edited]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  human-gate:
+    uses: ./.github/workflows/human-gate.yml
+    with:
+      runs-on: '"ubuntu-latest"'
