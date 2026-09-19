@@ -14,7 +14,72 @@ addresses, no product code. Every workflow uses only the caller's built-in
 
 | Workflow | What it does |
 | --- | --- |
+| [`tier3-gate.yml`](.github/workflows/tier3-gate.yml) | Fails a pull request that changes Tier 3 paths — the files that decide whether other changes are correct — unless it carries the `human-gate` label. |
 | [`human-gate.yml`](.github/workflows/human-gate.yml) | Enforces the `human-gate` label: disables auto-merge on a labelled PR, and fails the run when the PR body does not tell the owner the merge is theirs and what is at stake in it. |
+
+### `tier3-gate`
+
+Tier 3 is **the things that judge other changes**: CI workflows, test and
+Playwright configuration, time budgets, screenshot baselines, sudoers, runner
+tables, release plumbing, CODEOWNERS. A change to one of those cannot be judged
+by the thing it changes, which is how the September 2026 CI week happened — a
+Playwright parallelisation merged on its own green run and took the workstation
+down for a day, and a 3D plate was shrunk to a quarter of its depth by a PR
+whose pixel test it had just rewritten.
+
+This workflow asserts one implication: *touching Tier 3 implies the
+`human-gate` label*. It never re-asserts what `human-gate.yml` owns — the stake
+line, disabling auto-merge — so the two checks cannot disagree about one label.
+
+Caller snippet (the job id is half of the required-check context, `tier3 / gate`):
+
+```yaml
+name: Tier 3 gate
+
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize, edited, labeled, unlabeled]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  tier3:
+    uses: Lin214ia/workflows/.github/workflows/tier3-gate.yml@main
+    with:
+      runs-on: '["self-hosted","Linux","X64"]'
+      paths: |
+        apps/desktop/playwright.config.ts
+        **/*-snapshots/**
+```
+
+Three details are not style choices:
+
+- **`pull_request_target`, not `pull_request`.** Under `pull_request` GitHub
+  runs the workflow file from the PR's merge ref, so a PR that edits its own
+  caller is judged by its own edit — and `.github/**` is exactly what this
+  guards. `pull_request_target` runs the base branch's copy, which is safe here
+  because nothing is checked out and no PR code is executed. The token defaults
+  to write under that trigger, so the caller narrows it explicitly.
+- **No `paths:` filter on the caller.** A required check whose workflow never
+  starts leaves its context pending forever and freezes the repository. The gate
+  always runs and passes fast when nothing matches.
+- **`.github/**` is always Tier 3**, whatever `paths` says, so a repository
+  cannot declare its own guard out of scope. A file list long enough to hit the
+  API's 3000-file cap also counts as touching Tier 3: a truncated list cannot
+  prove the absence of one.
+
+**Rollout order matters.** Land the caller on the repository's default branch
+and watch the `tier3 / gate` context report on a real pull request *first*, then
+add that context to the repository's required checks. The reverse order leaves
+every PR waiting for a context that has never reported.
+
+**What it does not do.** Agents here act with the owner's own GitHub identity,
+so an agent can add the label and merge. This stops the accidental and the
+automated paths — auto-merge, the self-merge sweep — and makes the requirement
+loud. Distinguishing the owner from an agent holding his token needs a second
+account or a bot identity, which is a separate decision.
 
 ### `human-gate`
 
