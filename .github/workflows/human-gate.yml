@@ -21,9 +21,24 @@
 #     checkout — the PR's own code is never fetched or run by this workflow.
 #
 # Permissions: a reusable workflow cannot raise the caller's GITHUB_TOKEN
-# permissions, only narrow them. The caller must therefore grant
-# `contents: read` and `pull-requests: write` itself; without them the `gh`
-# calls below fail with 403 and the run goes red rather than passing quietly.
+# permissions, only narrow them. The CALLING JOB must therefore grant
+# `contents: write` and `pull-requests: write` itself; without them the `gh`
+# calls below fail and the run goes red rather than passing quietly.
+#
+# `contents: write`, not `read` — measured, not guessed. `gh pr merge
+# --disable-auto` is a merge-capable operation on contents, the same grant that
+# turning auto-merge ON requires. Under `contents: read` the `enforce` job below
+# finds auto-merge enabled, announces that it is disabling it, and then dies on
+#
+#   GraphQL: Resource not accessible by integration (disablePullRequestAutoMerge)
+#
+# leaving auto-merge armed on a PR only the owner may merge (run 34901519703 in
+# AyakaRadiology/needle-simulator; run 35449316166 in Lin214ia/infra).
+#
+# Grant it on the CALLING JOB, not at the top of the caller's file, so the only
+# steps that ever see the write are this workflow's own: they live in this
+# repository, fetch no pull-request code, and run nothing but `gh`. Any other
+# job in the caller's file keeps its own, narrower grant.
 name: Human gate
 
 on:

@@ -339,6 +339,52 @@ class TestWorkflowShape(unittest.TestCase):
             text.count("contains(github.event.pull_request.labels.*.name, 'human-gate')"), 2
         )
 
+    def test_the_documented_grant_is_contents_write(self):
+        """`contents: read` here is not a typo with no consequence: it is the
+        permission four consumers copied, and under it `gh pr merge
+        --disable-auto` fails with `Resource not accessible by integration
+        (disablePullRequestAutoMerge)` — the gate goes red and leaves
+        auto-merge armed on a PR only the owner may merge (needle-simulator run
+        34901519703). This file and the README are where that value is read
+        from, so they are what has to be right."""
+        header = _WORKFLOW.read_text().split("name: Human gate", 1)[0]
+        self.assertIn("`contents: write` and `pull-requests: write` itself", header)
+
+        # Only this workflow's half of the README. `tier3-gate` documents
+        # `contents: read` a few sections up and is correct to: it never
+        # disables auto-merge, it only reads through `gh`.
+        readme = (_ROOT / "README.md").read_text()
+        section = readme.split("### `human-gate`", 1)[1].split("\n## ", 1)[0]
+        # The copyable caller snippet must show the grant job-scoped, above the
+        # `uses:` it applies to. A snippet granting it at the top of the file
+        # would be copied that way into repositories whose other jobs do check
+        # out pull-request code.
+        self.assertIn(
+            "    permissions:\n"
+            "      contents: write\n"
+            "      pull-requests: write\n"
+            "    uses: Lin214ia/workflows",
+            section,
+        )
+
+    def test_the_selftest_grants_its_calling_job_contents_write(self):
+        """The self-test is a caller like any other. Running it on a weaker
+        token than the README documents would prove the workflow works under
+        permissions no consumer has — the live check would stay green over
+        exactly the hole it exists to catch."""
+        job = _SELFTEST.read_text().split("  human-gate:", 1)[1]
+        self.assertIn("    permissions:", job)
+        self.assertIn("      contents: write", job)
+        self.assertIn("      pull-requests: write", job)
+
+    def test_the_selftest_keeps_the_file_level_grant_read_only(self):
+        """`contents: write` is not operation-specific, so what bounds it is
+        which steps see it. Raised at the top of the file it would reach every
+        other job the caller ever adds; scoped to the calling job it reaches
+        only this workflow's own steps, which check out no PR code."""
+        top = _SELFTEST.read_text().split("\njobs:", 1)[0]
+        self.assertIn("\npermissions:\n  contents: read\n", top)
+
     def test_the_selftest_calls_this_workflow_on_pull_request(self):
         """Without it, nothing in this repo ever executes the workflow it ships."""
         text = _SELFTEST.read_text()

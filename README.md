@@ -126,6 +126,12 @@ permissions:
 
 jobs:
   human-gate:
+    # Job-scoped on purpose: see Permissions below. `contents: write` is what
+    # `gh pr merge --disable-auto` needs; the top of the file stays read-only so
+    # every other job in it does.
+    permissions:
+      contents: write
+      pull-requests: write
     uses: Lin214ia/workflows/.github/workflows/human-gate.yml@main
     with:
       runs-on: '["self-hosted","Linux","X64"]'
@@ -151,18 +157,52 @@ exhausted once.
 
 #### Permissions
 
-The caller must grant them:
+**The calling job** must grant them:
 
 ```yaml
-permissions:
-  contents: read
-  pull-requests: write
+jobs:
+  human-gate:
+    permissions:
+      contents: write
+      pull-requests: write
+    uses: Lin214ia/workflows/.github/workflows/human-gate.yml@main
 ```
 
 **A reusable workflow cannot raise the caller's `GITHUB_TOKEN` permissions, only
 narrow them.** This workflow therefore declares none of its own — the grant is
 entirely the caller's. A caller that forgets does not get a silent skip: the `gh`
-calls fail with 403 and the run goes red.
+calls fail and the run goes red.
+
+`contents: **write**`, not `read`. This is measured, not guessed. Turning
+auto-merge *off* with `gh pr merge --disable-auto` is a merge-capable operation
+on contents — the same scope that turning it *on* needs. Under `contents: read`
+the `enforce` job finds auto-merge enabled, prints that it is disabling it, and
+then dies on
+
+```
+GraphQL: Resource not accessible by integration (disablePullRequestAutoMerge)
+```
+
+so the gate goes red *and* leaves auto-merge armed on a PR only the owner may
+merge. That is run `34901519703` in `AyakaRadiology/needle-simulator` and run
+`35449316166` in `Lin214ia/infra`.
+
+**Scope it to the job, not to the file.** `contents: write` is not
+operation-specific: a token holding it can push to the default branch, not only
+disable auto-merge. What bounds the exposure here is *which steps see it*. A
+job-scoped grant is handed only to this reusable workflow's own steps, which
+live in this repository, use nothing but the built-in `GITHUB_TOKEN` and `gh`,
+and **check out no pull-request code** — there is no `actions/checkout` and no
+third-party action anywhere in `human-gate.yml`, so no code from the pull
+request ever runs beside that token. Raising the grant at the top of the caller
+file instead would hand the same write to every other job in it, including any
+that does check the PR out. Keep the file-level block at `contents: read`.
+
+Both jobs of this workflow — `enforce` and `body` — run with whatever the
+calling job grants, because the reusable workflow declares no `permissions:` of
+its own. `body` only reads and comments, so the write is surplus to it; that is
+the cost of the grant being per-call rather than per-job, and it is bounded by
+the same two facts above.
 
 ## Why callers pin `@main`
 

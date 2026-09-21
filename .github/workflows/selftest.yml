@@ -21,6 +21,13 @@ permissions:
 
 jobs:
   human-gate:
+    # The same job-scoped grant the README tells consumers to make, for the same
+    # reason: `gh pr merge --disable-auto` needs `contents: write`. Exercising a
+    # weaker token here would prove the workflow works under permissions no
+    # caller actually has.
+    permissions:
+      contents: write
+      pull-requests: write
     uses: ./.github/workflows/human-gate.yml
     with:
       runs-on: '"ubuntu-latest"'
