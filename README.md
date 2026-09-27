@@ -16,6 +16,7 @@ addresses, no product code. Every workflow uses only the caller's built-in
 | --- | --- |
 | [`tier3-gate.yml`](.github/workflows/tier3-gate.yml) | Fails a pull request that changes Tier 3 paths — the files that decide whether other changes are correct — unless it carries the `human-gate` label. |
 | [`human-gate.yml`](.github/workflows/human-gate.yml) | Enforces the `human-gate` label: disables auto-merge on a labelled PR, and fails the run when the PR body does not tell the owner the merge is theirs and what is at stake in it. |
+| [`dependabot-automerge.yml`](.github/workflows/dependabot-automerge.yml) | Arms GitHub's native auto-merge on Dependabot PRs for semver patch/minor updates; leaves majors (and any caller-held dependency) for an agent to review, with a one-time comment and, for majors, the `dependabot-major` label. |
 
 ### `tier3-gate`
 
@@ -163,6 +164,82 @@ permissions:
 narrow them.** This workflow therefore declares none of its own — the grant is
 entirely the caller's. A caller that forgets does not get a silent skip: the `gh`
 calls fail with 403 and the run goes red.
+
+### `dependabot-automerge`
+
+Direction (Harry, 2026-09-27 chat): patch/minor Dependabot PRs merge
+themselves; majors are left for an agent to review weekly; applied across
+every repo running Dependabot.
+
+Same shape as the fleet's original single-repo copy
+(`AyakaRadiology/needle-simulator`, now a thin caller of this file): it reads
+`dependabot/fetch-metadata`'s `update-type` and `dependency-names`, arms
+`gh pr merge --auto --squash` for semver patch/minor, and otherwise leaves the
+PR alone with a one-time comment. Two inputs generalise what used to be
+hardcoded per repo:
+
+- **`hold-patterns`** — comma-separated dependency-name globs (bash `case`
+  matching) that are never armed regardless of update-type, e.g. needle-
+  simulator's `@cornerstonejs/*` (a CS3D minor has broken the desktop app's
+  rendering in ways CI does not catch) or scl3300-stream's `pico-sdk`
+  submodule (its own `dependabot.yml` documents gitsubmodule bumps as "not
+  auto-merge candidates").
+- **`arm-majors`** — off by default. A major update gets the
+  `dependabot-major` label (created idempotently) and a one-time "left for an
+  agent to review" comment instead of being armed. Setting this `true` arms
+  majors too (still labelled) but is a separate decision from adopting this
+  workflow at all — no caller in this fleet sets it.
+
+A grouped PR (`.github/dependabot.yml` `groups:`) is judged by
+`update-type` alone, which `fetch-metadata` documents as the worst case across
+the whole group — a major bump anywhere in the group reports major and the PR
+is left unarmed, with no per-dependency parsing needed here.
+
+Caller snippet:
+
+```yaml
+name: Dependabot auto-merge
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  dependabot-automerge:
+    if: github.actor == 'dependabot[bot]'
+    uses: Lin214ia/workflows/.github/workflows/dependabot-automerge.yml@main
+    with:
+      runs-on: '["self-hosted","Linux","X64"]'
+      hold-patterns: '@cornerstonejs/*'
+```
+
+#### Inputs
+
+| Input | Type | Required | Default | Notes |
+| --- | --- | --- | --- | --- |
+| `runs-on` | string | no | `'"ubuntu-latest"'` | Same JSON-string shape as `human-gate.yml`'s input, but **defaults** to hosted `ubuntu-latest` — unlike that one, deliberately: this job does no checkout or build, and some caller repos (`Lin214ia/*`) have no self-hosted runner group at all. A caller with its own group should still pass it explicitly. |
+| `hold-patterns` | string | no | `''` | Comma-separated dependency-name globs, matched with bash `case`. |
+| `arm-majors` | boolean | no | `false` | Do not set `true` without an explicit owner decision — it is a separate policy change from rolling this workflow out. |
+
+#### Permissions
+
+The caller must grant them:
+
+```yaml
+permissions:
+  contents: write
+  pull-requests: write
+```
+
+`contents: write` is what lets `gh pr merge --auto` arm the merge and
+`gh label create`/`gh pr edit --add-label` manage the `dependabot-major`
+label; `pull-requests: write` is for the review comments. As with the other
+workflows here, this file declares neither permission itself — a reusable
+workflow can only narrow a caller's token, never raise it.
 
 ## Why callers pin `@main`
 
