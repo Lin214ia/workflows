@@ -1,0 +1,187 @@
+# Enables GitHub's native auto-merge for Dependabot PRs, so patch/minor bumps
+# land themselves once CI is green, shared across every caller repo. This
+# generalises the workflow that lived only in AyakaRadiology/needle-simulator
+# (`.github/workflows/dependabot-automerge.yml` there, now a thin caller of
+# this file) so every repo running Dependabot gets the same policy instead of
+# five copies quietly drifting apart, the same failure mode `human-gate.yml`
+# already fixed once in this repo (see README.md).
+#
+# Direction (Harry, 2026-09-27 chat): patch/minor auto-merges; majors are left
+# for an agent to review weekly; roll out repo-wide.
+#
+# Arming rule: auto-merge is armed for semver patch or minor updates in ANY
+# ecosystem. `dependabot/fetch-metadata`'s `update-type` output is documented as
+# "the highest semver change being made by this PR", so a grouped PR (multiple
+# dependencies bundled by `.github/dependabot.yml` `groups:`) is already the
+# worst-case update type across the group -- a major bump anywhere in the group
+# reports major and the PR is left unarmed, no per-dependency parsing needed.
+#
+# `hold-patterns` lets a caller exempt specific dependencies from ALL of the
+# above regardless of update-type (e.g. needle-simulator's Cornerstone3D
+# render stack, which has broken the desktop app in ways CI does not catch;
+# scl3300-stream's pico-sdk submodule, which its own dependabot.yml documents
+# as "not an auto-merge candidate"). A held dependency never arms and gets a
+# one-time review comment instead.
+#
+# Major updates never arm by default (`arm-majors: false`): they get a
+# one-time PR comment flagging them for an agent (or Harry) to review, plus the
+# `dependabot-major` label (created idempotently). Setting `arm-majors: true`
+# is a separate, deliberate decision a caller must opt into explicitly -- do
+# not flip it without an owner decision; majors stay labelled either way.
+#
+# Uses `pull_request_target` but deliberately does NOT check out or run any PR
+# code -- it only reads trusted Dependabot metadata and calls `gh` -- so the
+# elevated token is not exposed to untrusted code.
+#
+# Permissions: a reusable workflow cannot raise the caller's GITHUB_TOKEN
+# permissions, only narrow them. The caller must grant `contents: write` (auto
+# -merge + labels) and `pull-requests: write` (comments) itself; without them
+# the `gh` calls below fail with 403 and the run goes red rather than passing
+# quietly.
+name: Dependabot auto-merge
+
+on:
+  workflow_call:
+    inputs:
+      runs-on:
+        description: >-
+          Runner label(s) as a JSON string: '"ubuntu-latest"' or
+          '["self-hosted","Linux","X64"]'. Defaults to GitHub-hosted
+          `ubuntu-latest` (unlike human-gate.yml's `runs-on`, which has no
+          default): some caller repos have no self-hosted runner group at all,
+          and this job does not check out or build anything, so hosted minutes
+          for it are cheap. A caller with its own runner group should still
+          pass it explicitly, for the same reason its other CI jobs do.
+        required: false
+        default: '"ubuntu-latest"'
+        type: string
+      hold-patterns:
+        description: >-
+          Comma-separated dependency-name glob patterns (matched against
+          fetch-metadata's `dependency-names` with bash `case`, e.g.
+          "@cornerstonejs/*,pico-sdk"). Any dependency in the PR matching one
+          of these is never armed, regardless of update-type, and gets a
+          one-time review comment instead. Empty (default) holds nothing.
+        required: false
+        default: ''
+        type: string
+      arm-majors:
+        description: >-
+          When true, major-version updates are armed for auto-merge the same
+          as patch/minor (still labelled `dependabot-major`). Default false:
+          majors are left for an agent to review instead. This is a separate
+          decision from adopting this workflow -- do not set true without an
+          explicit owner decision.
+        required: false
+        default: false
+        type: boolean
+
+jobs:
+  auto-merge:
+    if: github.actor == 'dependabot[bot]'
+    runs-on: ${{ fromJSON(inputs.runs-on) }}
+    steps:
+      - name: Fetch Dependabot metadata
+        id: meta
+        uses: dependabot/fetch-metadata@v3
+
+      - name: Classify update (patch/minor vs major, hold-patterns)
+        id: gate
+        env:
+          UPDATE_TYPE: ${{ steps.meta.outputs.update-type }}
+          DEP_NAMES: ${{ steps.meta.outputs.dependency-names }}
+          HOLD_PATTERNS: ${{ inputs.hold-patterns }}
+          ARM_MAJORS: ${{ inputs.arm-majors }}
+        run: |
+          set -euo pipefail
+          echo "update-type=$UPDATE_TYPE  dependency-names=$DEP_NAMES  hold-patterns=$HOLD_PATTERNS"
+
+          held=false
+          IFS=',' read -ra patterns <<< "$HOLD_PATTERNS"
+          IFS=',' read -ra deps <<< "$DEP_NAMES"
+          for pattern in "${patterns[@]}"; do
+            [ -z "$pattern" ] && continue
+            for dep in "${deps[@]}"; do
+              # shellcheck disable=SC2254  # $pattern is a glob on purpose
+              case "$dep" in
+                $pattern) held=true ;;
+              esac
+            done
+          done
+
+          major=false
+          case "$UPDATE_TYPE" in
+            version-update:semver-major) major=true ;;
+          esac
+
+          auto=false
+          if [ "$held" = "false" ]; then
+            if [ "$major" = "false" ]; then
+              auto=true
+            elif [ "$ARM_MAJORS" = "true" ]; then
+              auto=true
+            fi
+          fi
+
+          {
+            echo "held=$held"
+            echo "major=$major"
+            echo "auto=$auto"
+          } >> "$GITHUB_OUTPUT"
+          echo "Decision: held=$held major=$major auto=$auto"
+
+      - name: Enable auto-merge for patch/minor PR
+        if: steps.gate.outputs.auto == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: gh pr merge --auto --squash "$PR_URL"
+
+      - name: Ensure the dependabot-major label exists
+        if: steps.gate.outputs.major == 'true' && steps.gate.outputs.held == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          gh label create dependabot-major --repo "$REPO" \
+            --color 5319e7 \
+            --description "Major dependency bump left for an agent to review" \
+            --force
+
+      - name: Apply the dependabot-major label
+        if: steps.gate.outputs.major == 'true' && steps.gate.outputs.held == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: gh pr edit "$PR_URL" --add-label dependabot-major
+
+      - name: Flag major update for review (comment once)
+        if: steps.gate.outputs.major == 'true' && steps.gate.outputs.held == 'false' && steps.gate.outputs.auto == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: |
+          set -euo pipefail
+          marker="major update: left for an agent to review"
+          already="$(gh pr view "$PR_URL" --json comments -q '.comments[].body' | grep -qF "$marker" && echo yes || echo no)"
+          if [ "$already" = "yes" ]; then
+            echo "already flagged, skipping comment"
+          else
+            gh pr comment "$PR_URL" --body "$marker"
+          fi
+
+      - name: Flag held dependency update for review (comment once)
+        if: steps.gate.outputs.held == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: |
+          set -euo pipefail
+          marker="held dependency update: left for an agent to review with evidence"
+          already="$(gh pr view "$PR_URL" --json comments -q '.comments[].body' | grep -qF "$marker" && echo yes || echo no)"
+          if [ "$already" = "yes" ]; then
+            echo "already flagged, skipping comment"
+          else
+            gh pr comment "$PR_URL" --body "$marker"
+          fi
