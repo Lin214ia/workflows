@@ -10,11 +10,10 @@
 # `ubuntu-latest`: this repository is public, so GitHub-hosted minutes are free
 # here. Consumers pass their own labels.
 #
-# `dependabot-automerge` is included here too, for the same reason: its
+# `dependabot-automerge` is the workflow exercised here: its
 # `actor == 'dependabot[bot]'` guard means the job always no-ops on this
 # repo's own (human-authored) PRs, but the `workflow_call` interface and
-# `fromJSON(inputs.runs-on)` resolution still get exercised on every PR, the
-# same way `human-gate` does.
+# `fromJSON(inputs.runs-on)` resolution still get exercised on every PR.
 name: Self-test
 
 on:
@@ -26,11 +25,6 @@ permissions:
   pull-requests: write
 
 jobs:
-  human-gate:
-    uses: ./.github/workflows/human-gate.yml
-    with:
-      runs-on: '"ubuntu-latest"'
-
   dependabot-automerge:
     uses: ./.github/workflows/dependabot-automerge.yml
     with:

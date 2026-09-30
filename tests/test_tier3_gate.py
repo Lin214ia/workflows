@@ -1,6 +1,6 @@
 """Tests for the shell inside .github/workflows/tier3-gate.yml.
 
-Same approach as test_human_gate.py: a workflow step only ever runs on GitHub,
+A workflow step only ever runs on GitHub,
 so the `run:` block is sliced out of the YAML by indentation and executed here
 with a stubbed `gh` on PATH. No third-party dependency; the structural
 assertions fail loudly if the shape the slicing assumes ever changes.

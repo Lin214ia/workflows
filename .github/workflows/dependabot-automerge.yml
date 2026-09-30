@@ -3,8 +3,7 @@
 # generalises the workflow that lived only in AyakaRadiology/needle-simulator
 # (`.github/workflows/dependabot-automerge.yml` there, now a thin caller of
 # this file) so every repo running Dependabot gets the same policy instead of
-# five copies quietly drifting apart, the same failure mode `human-gate.yml`
-# already fixed once in this repo (see README.md).
+# five copies quietly drifting apart (see README.md).
 #
 # Direction (Harry, 2026-09-27 chat): patch/minor auto-merges; majors are left
 # for an agent to review weekly; roll out repo-wide.
@@ -47,8 +46,7 @@ on:
         description: >-
           Runner label(s) as a JSON string: '"ubuntu-latest"' or
           '["self-hosted","Linux","X64"]'. Defaults to GitHub-hosted
-          `ubuntu-latest` (unlike human-gate.yml's `runs-on`, which has no
-          default): some caller repos have no self-hosted runner group at all,
+          `ubuntu-latest`: some caller repos have no self-hosted runner group at all,
           and this job does not check out or build anything, so hosted minutes
           for it are cheap. A caller with its own runner group should still
           pass it explicitly, for the same reason its other CI jobs do.

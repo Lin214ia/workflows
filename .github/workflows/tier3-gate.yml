@@ -10,11 +10,10 @@
 #
 # So Tier 3 paths — CI workflows, test and Playwright configuration, time
 # budgets, screenshot baselines, sudoers, runner tables, release plumbing,
-# CODEOWNERS — require the `human-gate` label, and the owner's own workflow then
-# holds the PR open for him. This workflow asserts one implication and no more:
-# touching Tier 3 implies the label. It never re-asserts what `human-gate.yml`
-# owns (the stake line, disabling auto-merge), so two checks can never disagree
-# about one label.
+# CODEOWNERS — require the `human-gate` label. This workflow asserts one
+# implication and no more: touching Tier 3 implies the label. (The per-PR human
+# gate that used to enforce the label's meaning was abolished on 2026-09-27;
+# no repository calls this workflow today.)
 #
 # Design constraints, each load-bearing:
 #   * It must REPORT ON EVERY PR. A required check whose workflow never starts
