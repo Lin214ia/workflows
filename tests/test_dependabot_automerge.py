@@ -1,11 +1,9 @@
 """Tests for the shell inside .github/workflows/dependabot-automerge.yml.
 
-Same approach as tests/test_human_gate.py: a workflow step only ever executes
-on GitHub, so the `run:` blocks are sliced out of the YAML and run here with a
-stubbed `gh` on PATH. Unlike that file's slicer -- which stops at the first
-`run:` block in a job, because human-gate.yml's two jobs each have exactly
-one -- this workflow has one job with several `run:` steps, so the slicer here
-keys blocks by the step's `name:` instead and returns every one.
+A workflow step only ever executes on GitHub, so the `run:` blocks are sliced
+out of the YAML and run here with a stubbed `gh` on PATH. This workflow has one
+job with several `run:` steps, so the slicer keys blocks by the step's `name:`
+and returns every one.
 
 The workflow is the single source of the markers, the label name and the
 classification rules. Nothing here transcribes them as separate constants
@@ -288,7 +286,7 @@ class TestWorkflowShape(unittest.TestCase):
         )
 
     def test_no_expression_interpolation_inside_any_run_block(self):
-        """Script-injection invariant, same as human-gate.yml: PR-controlled
+        """Script-injection invariant: PR-controlled
         text (dependency names, PR body) must never be spliced into a shell
         script. Every value reaches these scripts through `env:` instead."""
         for step, script in _BLOCKS.items():
@@ -315,7 +313,7 @@ class TestWorkflowShape(unittest.TestCase):
         self.assertEqual(uses, ["dependabot/fetch-metadata@v3"])
 
     def test_runs_on_has_a_default(self):
-        """Unlike human-gate.yml, this input has a default: some callers
+        """This input has a default: some callers
         (Lin214ia/*) have no self-hosted runner group, and this job does no
         checkout or build, so hosted minutes for it are cheap."""
         text = _WORKFLOW.read_text()
