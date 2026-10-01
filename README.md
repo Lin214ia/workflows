@@ -7,8 +7,10 @@ Reusable GitHub Actions workflows shared by repositories in two owners:
 **This repository is public on purpose.** A private reusable workflow can only
 be called from inside its own owner, and these are called from both — so public
 is the only shape that works. Nothing here is secret: no tokens, no runner
-addresses, no product code. Every workflow uses only the caller's built-in
-`GITHUB_TOKEN` and `gh`, checks out nothing, and runs no third-party action.
+addresses, no product code. Every workflow uses the caller's built-in
+`GITHUB_TOKEN` and `gh`, checks out nothing, and runs no third-party action
+(`dependabot-automerge.yml` additionally mints a GitHub App token with GitHub's
+official `actions/create-github-app-token`, from credentials the caller passes).
 
 ## Workflows
 
@@ -66,6 +68,9 @@ jobs:
     with:
       runs-on: '["self-hosted","Linux","X64"]'
       hold-patterns: '@cornerstonejs/*'
+    secrets:
+      app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
+      app-private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
 ```
 
 #### Inputs
@@ -75,6 +80,24 @@ jobs:
 | `runs-on` | string | no | `'"ubuntu-latest"'` | Runner label(s) as a JSON string, and it **defaults** to hosted `ubuntu-latest`, deliberately: this job does no checkout or build, and some caller repos (`Lin214ia/*`) have no self-hosted runner group at all. A caller with its own group should still pass it explicitly. |
 | `hold-patterns` | string | no | `''` | Comma-separated dependency-name globs, matched with bash `case`. |
 | `arm-majors` | boolean | no | `false` | Do not set `true` without an explicit owner decision — it is a separate policy change from rolling this workflow out. |
+
+#### Secrets (merge identity)
+
+| Secret | Required | Notes |
+| --- | --- | --- |
+| `app-id` | no | Id of a GitHub App installed on the caller repo with Contents and Pull requests write. |
+| `app-private-key` | no | That App's private key (PEM). |
+
+Auto-merge is armed with a token minted from this App, so the merge is
+attributed to the App and fires `push` workflows (post-merge CI on `main`,
+release-please). A merge armed with `GITHUB_TOKEN` fires none of them (GitHub's
+loop prevention), which is what Dependabot merges did before. The job runs
+under `pull_request_target` from `dependabot[bot]`, so `secrets.*` in the
+caller resolves against the **Dependabot** secret store: set them with
+`gh secret set --app dependabot` (or as org Dependabot secrets), not only as
+Actions secrets. If either is empty the job emits a `::warning` and falls back
+to `GITHUB_TOKEN` rather than failing, so rollout can precede provisioning;
+the warning says what is lost.
 
 #### Permissions
 
