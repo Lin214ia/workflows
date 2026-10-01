@@ -32,6 +32,25 @@
 # code -- it only reads trusted Dependabot metadata and calls `gh` -- so the
 # elevated token is not exposed to untrusted code.
 #
+# Merge identity: `gh pr merge --auto` is run with a short-lived GitHub App
+# installation token, NOT the caller's GITHUB_TOKEN. GitHub attributes the
+# eventual auto-merge to whoever armed it, and a merge made with GITHUB_TOKEN
+# deliberately fires no `push` workflows (loop prevention) -- so Dependabot
+# merges never ran post-merge CI on main nor release-please (2026-10-01,
+# needle-simulator #1272/#1273). Merged by an App, the `push` events fire like
+# any other merge. Callers pass the App credentials as the optional `app-id`
+# and `app-private-key` secrets. Because this job runs under
+# pull_request_target from dependabot[bot], `secrets.*` in the caller resolves
+# against the DEPENDABOT secret store, so the credentials must exist there
+# (`gh secret set --app dependabot ...`), not only as Actions secrets.
+# Without credentials the job falls back to GITHUB_TOKEN with an explicit
+# ::warning: failing instead would stop all auto-merge the moment this lands,
+# before any repo has the secrets, which is a worse regression than today's
+# behaviour; the warning names what is lost. The token is minted only after
+# the gate decided to arm, scoped to the current repository and to
+# contents/pull-requests write, and used for that one `gh` call; the other
+# steps keep GITHUB_TOKEN. No PR code is ever checked out.
+#
 # Permissions: a reusable workflow cannot raise the caller's GITHUB_TOKEN
 # permissions, only narrow them. The caller must grant `contents: write` (auto
 # -merge + labels) and `pull-requests: write` (comments) itself; without them
@@ -73,6 +92,18 @@ on:
         required: false
         default: false
         type: boolean
+    secrets:
+      app-id:
+        description: >-
+          Id of the GitHub App whose installation token arms auto-merge, so
+          the merge is attributed to the App and fires `push` workflows. Must
+          be a Dependabot secret in the caller (see header). Optional only so
+          rollout can precede provisioning; absent means a loud warning and a
+          GITHUB_TOKEN fallback.
+        required: false
+      app-private-key:
+        description: Private key (PEM) of the App named by `app-id`.
+        required: false
 
 jobs:
   auto-merge:
@@ -128,10 +159,35 @@ jobs:
           } >> "$GITHUB_OUTPUT"
           echo "Decision: held=$held major=$major auto=$auto"
 
+      - name: Check App credentials for the merge identity
+        id: creds
+        if: steps.gate.outputs.auto == 'true'
+        env:
+          APP_ID: ${{ secrets.app-id }}
+          APP_PRIVATE_KEY: ${{ secrets.app-private-key }}
+        run: |
+          set -euo pipefail
+          if [ -n "$APP_ID" ] && [ -n "$APP_PRIVATE_KEY" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "::warning title=Auto-merge will use GITHUB_TOKEN::No App credentials reached this job (app-id/app-private-key are empty; for a Dependabot-triggered run they must be DEPENDABOT secrets). The merge will be attributed to github-actions and will NOT trigger push workflows: no post-merge CI on main, no release-please."
+          fi
+
+      - name: Mint the App token that arms auto-merge
+        id: app-token
+        if: steps.gate.outputs.auto == 'true' && steps.creds.outputs.available == 'true'
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ secrets.app-id }}
+          private-key: ${{ secrets.app-private-key }}
+          permission-contents: write
+          permission-pull-requests: write
+
       - name: Enable auto-merge for patch/minor PR
         if: steps.gate.outputs.auto == 'true'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
           PR_URL: ${{ github.event.pull_request.html_url }}
         run: gh pr merge --auto --squash "$PR_URL"
 

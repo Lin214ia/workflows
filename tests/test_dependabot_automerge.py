@@ -64,6 +64,8 @@ _GATE_SCRIPT = _BLOCKS["Classify update (patch/minor vs major, hold-patterns)"]
 _MAJOR_COMMENT_SCRIPT = _BLOCKS["Flag major update for review (comment once)"]
 _HELD_COMMENT_SCRIPT = _BLOCKS["Flag held dependency update for review (comment once)"]
 
+_CREDS_SCRIPT = _BLOCKS["Check App credentials for the merge identity"]
+
 _PR_URL = "https://example.test/pull/42"
 
 
@@ -248,6 +250,35 @@ class MajorCommentStepTest(unittest.TestCase):
         self.assertNotIn("pr comment", proc.calls)
 
 
+class CredsStepTest(unittest.TestCase):
+    """The credentials check: loud warning, never a silent fallback."""
+
+    def setUp(self) -> None:
+        self.h = _StepHarness(_CREDS_SCRIPT, _GATE_GH_STUB)
+        self.addCleanup(self.h.cleanup)
+
+    def _run(self, app_id: str, key: str) -> subprocess.CompletedProcess:
+        out = self.h.root / "github_output"
+        out.write_text("")
+        proc = self.h.run(APP_ID=app_id, APP_PRIVATE_KEY=key, GITHUB_OUTPUT=str(out))
+        proc.output = out.read_text()  # type: ignore[attr-defined]
+        return proc
+
+    def test_both_present_is_available_and_quiet(self):
+        proc = self._run("123", "pem")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(proc.output.strip(), "available=true")
+        self.assertNotIn("::warning", proc.stdout)
+
+    def test_missing_secret_warns_loudly(self):
+        for app_id, key in (("", ""), ("123", ""), ("", "pem")):
+            proc = self._run(app_id, key)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertEqual(proc.output.strip(), "available=false")
+            self.assertIn("::warning", proc.stdout)
+            self.assertIn("push workflows", proc.stdout)
+
+
 class HeldCommentStepTest(unittest.TestCase):
     def setUp(self) -> None:
         self.h = _StepHarness(_HELD_COMMENT_SCRIPT, _COMMENT_GH_STUB)
@@ -279,6 +310,7 @@ class TestWorkflowShape(unittest.TestCase):
             set(_BLOCKS),
             {
                 "Classify update (patch/minor vs major, hold-patterns)",
+                "Check App credentials for the merge identity",
                 "Ensure the dependabot-major label exists",
                 "Flag major update for review (comment once)",
                 "Flag held dependency update for review (comment once)",
@@ -305,12 +337,32 @@ class TestWorkflowShape(unittest.TestCase):
         it; the grant belongs entirely to the caller (see README.md)."""
         self.assertNotIn("\npermissions:", _WORKFLOW.read_text())
 
-    def test_no_third_party_action_except_fetch_metadata(self):
+    def test_only_two_actions_and_no_checkout(self):
         """No checkout, and no action beyond the one that reads Dependabot's
-        own trusted metadata -- this workflow must never fetch or run PR
-        code, since it runs under pull_request_target in every caller."""
+        own trusted metadata and GitHub's official App-token minter -- this
+        workflow must never fetch or run PR code, since it runs under
+        pull_request_target in every caller."""
         uses = re.findall(r"uses:\s*(\S+)", _WORKFLOW.read_text())
-        self.assertEqual(uses, ["dependabot/fetch-metadata@v3"])
+        self.assertEqual(
+            uses,
+            ["dependabot/fetch-metadata@v3", "actions/create-github-app-token@v3"],
+        )
+
+    def test_merge_is_armed_with_the_app_token_not_github_token_alone(self):
+        """Regression: a merge armed with GITHUB_TOKEN fires no push workflows
+        (post-merge CI and release-please never ran for Dependabot merges)."""
+        text = _WORKFLOW.read_text()
+        step = text.split("      - name: Enable auto-merge for patch/minor PR", 1)[1]
+        step = step.split("      - name:", 1)[0]
+        self.assertIn("steps.app-token.outputs.token", step)
+        self.assertIn("gh pr merge --auto --squash", step)
+
+    def test_app_secrets_are_optional(self):
+        text = _WORKFLOW.read_text()
+        block = text.split("    secrets:", 1)[1].split("\njobs:", 1)[0]
+        self.assertIn("app-id:", block)
+        self.assertIn("app-private-key:", block)
+        self.assertNotIn("required: true", block)
 
     def test_runs_on_has_a_default(self):
         """This input has a default: some callers
