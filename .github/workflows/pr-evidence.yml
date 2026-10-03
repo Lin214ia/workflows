@@ -1,0 +1,162 @@
+# A required check that an agent's pull request carries proof.
+#
+# Direction: Harry, chat 2026-10-03 — 「それとともに9点に持っていくようにして」 /
+# 「進めて」 (raise agent work, CI, stability to 9/10).
+#
+# Why it exists: "agent work quality" was not measurable. Of the merged agent PRs
+# in the last 30 days only 7/54 (needle-simulator), 5/42 (needle-guide) and 1/17
+# (scl3300-stream) had an `## Evidence` section, and 49 of 63 closed-unmerged PRs
+# were deliberate CI load-test probes that nothing distinguished from real work.
+# This check makes both machine-readable: real work must show evidence, and a
+# probe says so with the `experiment` label.
+#
+# Rules, for a PR authored by the agent identity (`agent-login`):
+#   * `experiment` label        -> passes, marked "excluded from quality metrics"
+#   * Dependabot / release-please PRs -> pass (not agent work product)
+#   * otherwise the body needs a `## Evidence` section that contains a fenced code
+#     block (with something in it), a markdown/HTML image, or a table.
+# Any other author passes untouched: the check is about the agent lane only.
+#
+# Design constraints, each load-bearing (same as tier3-gate was):
+#   * It must REPORT ON EVERY PR. A required check whose workflow never starts
+#     leaves its context pending forever and freezes the repository, so there is
+#     no `paths:` filter and no job-level `if:`; the decision is made inside the
+#     step, and the job passes fast when the PR is not the agent's.
+#   * The caller must trigger it with `pull_request_target`, so the base branch's
+#     copy runs and a PR cannot judge itself by editing the caller. Nothing is
+#     checked out and no PR code runs; the PR body only reaches the shell through
+#     `env:`, never through `${{ }}` inside `run:`.
+#   * The caller's types must include `edited`, `labeled` and `unlabeled` so the
+#     context is re-evaluated when the body or the label changes.
+#
+# Permissions: the job reads only the event payload and calls no API, so the
+# caller should set `contents: read` and `pull-requests: read` (under
+# `pull_request_target` the default token is a write token).
+name: PR evidence
+
+on:
+  workflow_call:
+    inputs:
+      runs-on:
+        description: >-
+          Runner label(s) as a JSON string: '"ubuntu-latest"' or
+          '["self-hosted","Linux","X64"]'. Required on purpose — a default here
+          would silently land a caller on billed GitHub-hosted minutes.
+        required: true
+        type: string
+      agent-login:
+        description: Login of the agent identity whose PRs must carry evidence.
+        required: false
+        default: hedgehog-agent[bot]
+        type: string
+      experiment-label:
+        description: >-
+          Label that marks a PR as a probe / load test that is not meant to
+          merge. Such a PR passes and is excluded from quality metrics.
+        required: false
+        default: experiment
+        type: string
+
+jobs:
+  check:
+    # This name is half of the required-check context (`<caller job id> / check`,
+    # i.e. `evidence / check` for the callers in this fleet) and is therefore a
+    # public interface: renaming it silently un-requires the check in every
+    # ruleset that names it. tests/test_pr_evidence.py pins it.
+    name: check
+    runs-on: ${{ fromJSON(inputs.runs-on) }}
+    steps:
+      - name: Agent PRs carry an Evidence section
+        env:
+          AUTHOR: ${{ github.event.pull_request.user.login }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          AGENT_LOGIN: ${{ inputs.agent-login }}
+          EXPERIMENT_LABEL: ${{ inputs.experiment-label }}
+          # Evaluated by Actions, not by the shell: the label set comes from the
+          # event payload, and the caller's `labeled`/`unlabeled` types re-run
+          # the workflow so the context follows the label.
+          IS_EXPERIMENT: ${{ contains(github.event.pull_request.labels.*.name, inputs.experiment-label) }}
+        run: |
+          set -euo pipefail
+
+          summary() {
+            if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+              printf '%s\n' "$1" >> "$GITHUB_STEP_SUMMARY"
+            fi
+          }
+
+          if [ "$AUTHOR" != "$AGENT_LOGIN" ]; then
+            echo "Authored by $AUTHOR, not $AGENT_LOGIN: not an agent PR, nothing to check."
+            summary "Not an agent PR (author: $AUTHOR). Nothing to check."
+            exit 0
+          fi
+
+          case "$HEAD_REF" in
+            dependabot/*|release-please--*)
+              echo "Branch $HEAD_REF is Dependabot / release-please plumbing: nothing to check."
+              summary "Dependabot / release-please PR. Nothing to check."
+              exit 0
+              ;;
+          esac
+
+          if [ "$IS_EXPERIMENT" = "true" ]; then
+            echo "This PR carries the $EXPERIMENT_LABEL label: not meant to merge."
+            summary "$EXPERIMENT_LABEL — excluded from quality metrics"
+            exit 0
+          fi
+
+          # Walk the body once. A fence opens on a line starting with three or
+          # more backticks or tildes and closes on the same kind; headings and
+          # tables inside a fence are text, not structure. Prints one proof kind
+          # per line: `fence` (a fenced block with a non-blank line in it),
+          # `image` or `table`, each only inside the Evidence section.
+          proof=$(printf '%s\n' "$PR_BODY" | tr -d '\r' | awk '
+            BEGIN { in_fence = 0; in_evidence = 0; content = 0 }
+            {
+              line = $0
+              if (match(line, /^ *(```+|~~~+)/)) {
+                marker = substr(line, RSTART, RLENGTH)
+                gsub(/ /, "", marker)
+                kind = substr(marker, 1, 1)
+                if (!in_fence) {
+                  in_fence = 1; fence_kind = kind; content = 0
+                } else if (kind == fence_kind) {
+                  if (in_evidence && content) print "fence"
+                  in_fence = 0
+                }
+                next
+              }
+              if (in_fence) {
+                if (line ~ /[^ \t]/) content = 1
+                next
+              }
+              if (line ~ /^(#|##)[ \t]/) {
+                in_evidence = (tolower(line) ~ /^##[ \t]+evidence[ \t]*$/)
+                next
+              }
+              if (!in_evidence) next
+              if (line ~ /!\[[^]]*\]\([^)]+\)/ || line ~ /<img[ \t]/) print "image"
+              if (line ~ /^[ \t]*\|?[ \t]*:?-+:?[ \t]*(\|[ \t]*:?-+:?[ \t]*)+\|?[ \t]*$/ ||
+                  line ~ /^[ \t]*\|[ \t]*:?-+:?[ \t]*\|?[ \t]*$/) print "table"
+            }
+          ')
+
+          if [ -n "$proof" ]; then
+            kinds=$(printf '%s\n' "$proof" | sort -u | paste -sd, -)
+            echo "Evidence section found with proof ($kinds)."
+            summary "Evidence section present ($kinds)."
+            exit 0
+          fi
+
+          echo "This agent PR has no usable '## Evidence' section."
+          echo
+          echo "Add a '## Evidence' heading to the PR body with at least one of:"
+          echo "  - a fenced code block holding real command output or test results"
+          echo "  - a markdown image (screenshot)"
+          echo "  - a markdown table (numbers)"
+          echo
+          echo "If this PR is a probe or load test that is not meant to merge, add the"
+          echo "$EXPERIMENT_LABEL label instead: it passes and is excluded from quality metrics."
+          summary "Missing '## Evidence' section (fenced block, image or table)."
+          exit 1

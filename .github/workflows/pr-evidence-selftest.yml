@@ -1,0 +1,29 @@
+# This repository's own caller of the PR evidence check, and the canonical
+# snippet consumers copy.
+#
+# `pull_request_target` is not a style choice: under `pull_request` GitHub runs
+# the workflow file from the PR's merge ref, so a PR editing this file would be
+# judged by its own edit. `pull_request_target` runs the base branch's copy. It
+# is safe here because nothing is checked out and no PR code runs.
+#
+# The token defaults to WRITE under `pull_request_target`, so the permissions
+# below are narrowing it on purpose.
+#
+# `ubuntu-latest`: this repository is public, so hosted minutes are free here.
+# Consumers pass their own runner labels.
+name: PR evidence self-test
+
+on:
+  pull_request_target:
+    types: [opened, edited, synchronize, reopened, labeled, unlabeled]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  # The job id is half of the required-check context: `evidence / check`.
+  evidence:
+    uses: ./.github/workflows/pr-evidence.yml
+    with:
+      runs-on: '"ubuntu-latest"'
