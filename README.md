@@ -17,6 +17,7 @@ official `actions/create-github-app-token`, from credentials the caller passes).
 | Workflow | What it does |
 | --- | --- |
 | [`dependabot-automerge.yml`](.github/workflows/dependabot-automerge.yml) | Arms GitHub's native auto-merge on Dependabot PRs for semver patch/minor updates; leaves majors (and any caller-held dependency) for an agent to review, with a one-time comment and, for majors, the `dependabot-major` label. |
+| [`pr-evidence.yml`](.github/workflows/pr-evidence.yml) | Required check `evidence / check`: a PR authored by the agent identity must have a `## Evidence` section with a fenced block, image or table; `experiment`-labelled probes pass and are excluded from quality metrics. |
 
 ### `dependabot-automerge`
 
@@ -114,6 +115,44 @@ permissions:
 label; `pull-requests: write` is for the review comments. As with the other
 workflows here, this file declares neither permission itself — a reusable
 workflow can only narrow a caller's token, never raise it.
+
+### `pr-evidence`
+
+Direction: Harry, chat 2026-10-03 (raise agent work quality to 9/10).
+
+Makes agent work quality measurable. A PR authored by `hedgehog-agent[bot]`
+fails unless its body has a `## Evidence` section holding a fenced code block
+(non-empty), a markdown or HTML image, or a table. A PR labelled `experiment`
+(load tests, probes, anything not meant to merge) passes and writes
+"experiment — excluded from quality metrics" to the job summary, so metrics can
+filter on the label. Other authors, Dependabot and release-please pass untouched.
+
+Rule for tooling: **probe PRs carry the `experiment` label.**
+
+Required-check context: **`evidence / check`** (caller job id `evidence`, called
+job `check`; both halves are pinned by `tests/test_pr_evidence.py`). The workflow
+has no path filter so it reports on every PR. Caller snippet:
+
+```yaml
+name: PR evidence
+
+on:
+  pull_request_target:
+    types: [opened, edited, synchronize, reopened, labeled, unlabeled]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  evidence:
+    uses: Lin214ia/workflows/.github/workflows/pr-evidence.yml@main
+    with:
+      runs-on: '["self-hosted","Linux","X64"]'
+```
+
+Inputs: `runs-on` (required), `agent-login` (default `hedgehog-agent[bot]`),
+`experiment-label` (default `experiment`).
 
 ## Why callers pin `@main`
 
