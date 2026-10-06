@@ -33,7 +33,7 @@ jobs:
     # Measured 3-7 s over the last 15 runs; 5 min is the floor.
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - name: Install actionlint (pinned, checksum-verified)
         env:
@@ -66,7 +66,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - name: jq is present (the test stubs use it)
         run: jq --version
