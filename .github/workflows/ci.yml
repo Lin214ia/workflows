@@ -13,6 +13,12 @@ on:
 permissions:
   contents: read
 
+# One run per workflow+ref; a new push to a PR supersedes the old run. main
+# runs are never cancelled.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 env:
   # Pinned release of actionlint, with the checksum of the asset that is
   # downloaded. A floating version would change what this gate means without any
@@ -24,6 +30,8 @@ jobs:
   lint:
     name: actionlint + shellcheck
     runs-on: ubuntu-latest
+    # Measured 3-7 s over the last 15 runs; 5 min is the floor.
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v5
 
@@ -56,6 +64,7 @@ jobs:
   test:
     name: workflow shell tests
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v5
 

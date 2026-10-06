@@ -65,6 +65,8 @@ jobs:
     # ruleset that names it. tests/test_pr_evidence.py pins it.
     name: check
     runs-on: ${{ fromJSON(inputs.runs-on) }}
+    # Measured 9-18 s (needle-simulator, 20 runs); 5 min is the floor.
+    timeout-minutes: 5
     steps:
       - name: Agent PRs carry an Evidence section
         env:
