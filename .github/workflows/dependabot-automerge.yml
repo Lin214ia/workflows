@@ -109,6 +109,8 @@ jobs:
   auto-merge:
     if: github.actor == 'dependabot[bot]'
     runs-on: ${{ fromJSON(inputs.runs-on) }}
+    # Measured 15-22 s (needle-simulator, 4 non-skipped runs); 5 min is the floor.
+    timeout-minutes: 5
     steps:
       - name: Fetch Dependabot metadata
         id: meta
