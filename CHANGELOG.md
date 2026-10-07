@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.0](https://github.com/Lin214ia/workflows/compare/v1.0.0...v1.1.0) (2026-10-07)
+
+
+### Features
+
+* check-pins composite action; dispatch CI on every release PR; pin all actions ([#14](https://github.com/Lin214ia/workflows/issues/14)) ([d502a2f](https://github.com/Lin214ia/workflows/commit/d502a2f5f70ad2fcad5a0a1c7d42dbf7d780d191))
+
 ## 1.0.0 (2026-10-07)
 
 
