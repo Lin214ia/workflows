@@ -29,8 +29,12 @@ class TestReleaseConfig(unittest.TestCase):
         # Consumers and the v<major> job both rely on plain `vX.Y.Z`.
         self.assertIs(_CONFIG["include-component-in-tag"], False)
 
-    def test_manifest_has_no_version_before_the_first_release(self) -> None:
-        self.assertEqual(_MANIFEST, {})
+    def test_manifest_is_empty_or_carries_a_semver_for_the_root(self) -> None:
+        # Empty before the first release; the release PR then writes {".": "X.Y.Z"}.
+        # Both states must pass, or every release PR would fail its own CI.
+        self.assertLessEqual(set(_MANIFEST), {"."})
+        if "." in _MANIFEST:
+            self.assertRegex(_MANIFEST["."], r"^\d+\.\d+\.\d+$")
 
 
 class TestReleaseWorkflow(unittest.TestCase):
