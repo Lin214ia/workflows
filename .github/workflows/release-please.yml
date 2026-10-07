@@ -11,10 +11,11 @@
 # moving major tag `v1` is the convenience pointer for people who accept a
 # floating ref; it is advanced here after every v1.x.y release.
 #
-# Token: the built-in GITHUB_TOKEN. Cost, accepted: events created with it
-# trigger no other workflows, so (a) the release PR gets no `pull_request` CI
-# run and (b) the tag push triggers nothing. This repository has nothing that
-# runs on tags, and (a) is covered below by dispatching CI by hand.
+# Token: the release-bot App when its secrets exist, else GITHUB_TOKEN. Cost of
+# GITHUB_TOKEN, accepted: events created with it trigger no other workflows, so
+# (a) the release PR gets no `pull_request` CI run and (b) the tag push triggers
+# nothing. This repository has nothing that runs on tags, and (a) is covered
+# below by dispatching CI by hand.
 
 name: release-please
 
@@ -37,10 +38,36 @@ jobs:
       tag: ${{ steps.rp.outputs.tag_name }}
       major: ${{ steps.rp.outputs.major }}
     steps:
+      # Prefer the fleet's release-bot GitHub App when its credentials exist
+      # (same secrets the sibling repos use). It needs no repository setting and
+      # its PRs/tags trigger workflows. Without them, fall back to GITHUB_TOKEN,
+      # which additionally needs "Allow GitHub Actions to create and approve
+      # pull requests" enabled on the repository.
+      - name: Choose the token
+        id: choose
+        env:
+          APP_ID: ${{ secrets.RELEASE_BOT_APP_ID }}
+          PRIVATE_KEY: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -n "${APP_ID:-}" ] && [ -n "${PRIVATE_KEY:-}" ]; then
+            echo "app=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "app=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::RELEASE_BOT_* secrets absent; using GITHUB_TOKEN."
+          fi
+
+      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        id: app-token
+        if: steps.choose.outputs.app == 'true'
+        with:
+          app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
+          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+
       - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
         id: rp
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
 
@@ -49,7 +76,7 @@ jobs:
       # exempt from that rule and reports the same check names on the branch
       # head, which is what the PR's required checks look at.
       - name: Run CI on the release PR branch
-        if: steps.rp.outputs.prs_created == 'true'
+        if: steps.rp.outputs.prs_created == 'true' && steps.choose.outputs.app != 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_JSON: ${{ steps.rp.outputs.pr }}
