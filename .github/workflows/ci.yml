@@ -9,6 +9,9 @@ on:
   pull_request:
   push:
     branches: [main]
+  # Used by release-please.yml: a release PR opened with GITHUB_TOKEN gets no
+  # pull_request run, so its checks are dispatched onto the PR branch instead.
+  workflow_dispatch:
 
 permissions:
   contents: read

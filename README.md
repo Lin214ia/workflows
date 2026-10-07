@@ -65,7 +65,7 @@ permissions:
 jobs:
   dependabot-automerge:
     if: github.actor == 'dependabot[bot]'
-    uses: Lin214ia/workflows/.github/workflows/dependabot-automerge.yml@main
+    uses: Lin214ia/workflows/.github/workflows/dependabot-automerge.yml@<full commit sha> # v1.0.0
     with:
       runs-on: '["self-hosted","Linux","X64"]'
       hold-patterns: '@cornerstonejs/*'
@@ -146,7 +146,7 @@ permissions:
 
 jobs:
   evidence:
-    uses: Lin214ia/workflows/.github/workflows/pr-evidence.yml@main
+    uses: Lin214ia/workflows/.github/workflows/pr-evidence.yml@<full commit sha> # v1.0.0
     with:
       runs-on: '["self-hosted","Linux","X64"]'
 ```
@@ -154,19 +154,34 @@ jobs:
 Inputs: `runs-on` (required), `agent-login` (default `hedgehog-agent[bot]`),
 `experiment-label` (default `experiment`).
 
-## Why callers pin `@main`
+## Releases: callers pin a SHA
 
-Every consumer pins `@main`, not a tag or a SHA.
+Direction (Harry, chat 2026-10-07): consumers pin a release, not `@main`.
 
-**The problem being solved was drift.** Several copies of the same workflow
-existed in private repositories and had already diverged (different runner
-labels, indentation and comment sentences, and one copy carried a job the others
-lacked), and nothing anywhere would have told anyone. A tag or a SHA pin
-reintroduces exactly that: several pins that get bumped at different times, i.e.
-drift with a version number on it.
+```yaml
+uses: Lin214ia/workflows/.github/workflows/<file>@<full commit sha> # v1.2.3
+```
 
-**The trade-off is real and stated plainly:** a bad merge to `main` here breaks
-every caller at once. What makes that affordable:
+Always the full 40-character commit SHA of a release tag, with the version in
+the trailing comment. Dependabot's `github-actions` ecosystem reads that
+comment and opens a PR for each new release, so the pin moves forward on
+purpose, one reviewed (and CI-gated) bump at a time.
+
+[`release-please.yml`](.github/workflows/release-please.yml) keeps one open
+`chore(main): release X.Y.Z` PR, versioned from Conventional Commit titles
+(`feat` minor, `fix` patch, `!` major). Merging it tags `vX.Y.Z` and creates the
+GitHub release; a follow-up job then moves the major tag `v1` to that release
+for anyone who accepts a floating ref. Nothing merges the release PR
+automatically. The workflow uses `GITHUB_TOKEN`, so the release PR and tag
+trigger no other workflows; CI is dispatched onto the release branch instead.
+
+**The original reason for `@main` was drift:** several copies of the same
+workflow existed in private repositories and had diverged. A SHA pin brings back
+the risk of callers sitting on different versions, which is why Dependabot (not
+memory) moves them and why a breaking change must be a major release.
+
+**The trade-off of any shared workflow is real:** a bad release breaks every
+caller that bumps to it. What makes that affordable:
 
 - One owner (`Lin214ia`) writes here, and `main` is protected — changes arrive
   through a PR.
