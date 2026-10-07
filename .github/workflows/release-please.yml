@@ -1,0 +1,88 @@
+# Versioned releases, so consumers pin a release instead of `@main`.
+#
+# On every push to main, release-please maintains ONE open
+# "chore(main): release X.Y.Z" PR. Merging it tags vX.Y.Z and creates the
+# GitHub release. Never auto-merge that PR: when to cut a release is a
+# deliberate act.
+#
+# Consumers pin by full commit SHA with the version in a trailing comment
+#   uses: Lin214ia/workflows/.github/workflows/<file>@<sha> # v1.2.3
+# and Dependabot (github-actions ecosystem) proposes the next release. The
+# moving major tag `v1` is the convenience pointer for people who accept a
+# floating ref; it is advanced here after every v1.x.y release.
+#
+# Token: the built-in GITHUB_TOKEN. Cost, accepted: events created with it
+# trigger no other workflows, so (a) the release PR gets no `pull_request` CI
+# run and (b) the tag push triggers nothing. This repository has nothing that
+# runs on tags, and (a) is covered below by dispatching CI by hand.
+
+name: release-please
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write # only to dispatch CI on the release PR branch
+
+jobs:
+  release-please:
+    name: Maintain release PR
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      released: ${{ steps.rp.outputs.release_created }}
+      tag: ${{ steps.rp.outputs.tag_name }}
+      major: ${{ steps.rp.outputs.major }}
+    steps:
+      - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        id: rp
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+      # A PR opened with GITHUB_TOKEN gets no `pull_request` run, so its
+      # required checks would stay pending forever. A workflow_dispatch run is
+      # exempt from that rule and reports the same check names on the branch
+      # head, which is what the PR's required checks look at.
+      - name: Run CI on the release PR branch
+        if: steps.rp.outputs.prs_created == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_JSON: ${{ steps.rp.outputs.pr }}
+        run: |
+          set -euo pipefail
+          branch="$(jq -er '.headBranchName' <<<"$PR_JSON")"
+          gh workflow run ci.yml --repo "$GITHUB_REPOSITORY" --ref "$branch"
+
+      - name: Guard — a created release must carry a tag
+        if: steps.rp.outputs.release_created == 'true' && steps.rp.outputs.tag_name == ''
+        run: |
+          echo "::error::release-please created a release but tag_name is empty — check the output key." >&2
+          exit 1
+
+  major-tag:
+    name: Move the major tag
+    needs: release-please
+    if: needs.release-please.outputs.released == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.release-please.outputs.tag }}
+      - name: Point vMAJOR at the release
+        env:
+          TAG: ${{ needs.release-please.outputs.tag }}
+          MAJOR: ${{ needs.release-please.outputs.major }}
+        run: |
+          set -euo pipefail
+          if [ -z "$MAJOR" ]; then
+            echo "::error::release-please reported no major version for $TAG." >&2
+            exit 1
+          fi
+          git tag -f "v${MAJOR}" "$TAG"
+          git push --force origin "refs/tags/v${MAJOR}"
