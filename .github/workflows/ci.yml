@@ -36,7 +36,11 @@ jobs:
     # Measured 3-7 s over the last 15 runs; 5 min is the floor.
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Dogfood: the same composite action consumers add to their lint job.
+      - name: Every action is pinned to a commit SHA
+        uses: ./.github/actions/check-pins
 
       - name: Install actionlint (pinned, checksum-verified)
         env:
@@ -69,7 +73,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: jq is present (the test stubs use it)
         run: jq --version

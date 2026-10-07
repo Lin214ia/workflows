@@ -343,9 +343,11 @@ class TestWorkflowShape(unittest.TestCase):
         workflow must never fetch or run PR code, since it runs under
         pull_request_target in every caller."""
         uses = re.findall(r"uses:\s*(\S+)", _WORKFLOW.read_text())
+        # Which version is not this test's concern: every ref must be a full
+        # commit SHA, which tests/test_check_pins.py enforces repo-wide.
         self.assertEqual(
-            uses,
-            ["dependabot/fetch-metadata@v3", "actions/create-github-app-token@v3"],
+            [u.split("@")[0] for u in uses],
+            ["dependabot/fetch-metadata", "actions/create-github-app-token"],
         )
 
     def test_merge_is_armed_with_the_app_token_not_github_token_alone(self):

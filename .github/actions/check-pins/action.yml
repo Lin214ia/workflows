@@ -1,0 +1,23 @@
+name: check-pins
+description: >-
+  Fail unless every `uses:` in .github/workflows/*.yml and
+  .github/actions/**/action.yml is pinned to a full 40-hex commit SHA with a
+  trailing `# vX.Y.Z` (or `# vX`) comment, so Dependabot can keep it current.
+
+inputs:
+  root:
+    description: Repository root to scan.
+    required: false
+    default: ${{ github.workspace }}
+
+runs:
+  using: composite
+  steps:
+    - name: Check action pins
+      shell: bash
+      env:
+        ROOT: ${{ inputs.root }}
+        SCRIPT: ${{ github.action_path }}/check_pins.py
+      run: |
+        set -euo pipefail
+        python3 "$SCRIPT" "$ROOT"

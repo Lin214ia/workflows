@@ -8,7 +8,10 @@ and that every `uses:` is pinned to a full commit SHA.
 from __future__ import annotations
 
 import json
+import os
 import re
+import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -60,6 +63,56 @@ class TestReleaseWorkflow(unittest.TestCase):
     def test_ci_is_dispatched_onto_the_release_branch(self) -> None:
         self.assertIn("gh workflow run ci.yml", _WORKFLOW)
         self.assertRegex(_CI, r"(?m)^  workflow_dispatch:\n")
+
+    def test_dispatch_runs_on_every_push_not_only_when_the_pr_changed(self) -> None:
+        step = _dispatch_step()
+        self.assertNotIn("if:", step)
+        self.assertNotIn("prs_created", step)
+
+
+def _dispatch_step() -> str:
+    start = _WORKFLOW.index("      - name: Run CI on the open release PR branch")
+    end = _WORKFLOW.index("      - name: Guard", start)
+    return _WORKFLOW[start:end]
+
+
+def _dispatch_script() -> str:
+    step = _dispatch_step()
+    body = step.split("run: |\n", 1)[1]
+    return "\n".join(line[10:] for line in body.splitlines())
+
+
+class TestDispatchStep(unittest.TestCase):
+    """Executes the step's script against a stubbed `gh`."""
+
+    def _run(self, open_branch: str) -> list[str]:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            log = tmp_path / "calls"
+            gh = tmp_path / "gh"
+            gh.write_text(
+                "#!/bin/sh\n"
+                'if [ "$1 $2" = "pr list" ]; then printf %s "$STUB_BRANCH"; exit 0; fi\n'
+                'echo "$@" >> "$STUB_LOG"\n'
+            )
+            gh.chmod(0o755)
+            env = {
+                "PATH": f"{tmp}:{os.environ['PATH']}",
+                "STUB_BRANCH": open_branch,
+                "STUB_LOG": str(log),
+                "GITHUB_REPOSITORY": "o/r",
+            }
+            subprocess.run(["bash", "-c", _dispatch_script()], env=env, check=True)
+            return log.read_text().splitlines() if log.exists() else []
+
+    def test_dispatches_when_a_release_pr_is_open(self) -> None:
+        self.assertEqual(
+            self._run("release-please--branches--main"),
+            ["workflow run ci.yml --repo o/r --ref release-please--branches--main"],
+        )
+
+    def test_does_nothing_without_a_release_pr(self) -> None:
+        self.assertEqual(self._run(""), [])
 
 
 if __name__ == "__main__":

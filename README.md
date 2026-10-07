@@ -154,6 +154,18 @@ jobs:
 Inputs: `runs-on` (required), `agent-login` (default `hedgehog-agent[bot]`),
 `experiment-label` (default `experiment`).
 
+### `check-pins` (composite action)
+
+Fails if any `uses:` in the caller's `.github/workflows/*.yml` or
+`.github/actions/**/action.yml` is not a full 40-hex commit SHA followed by a
+`# vX.Y.Z` (or `# vX`) comment, which Dependabot needs to bump it. Local `./`
+refs and `docker://` images pinned by `@sha256:` digest are exempt. Errors list
+`file:line`. Add it to an existing always-on lint job (after checkout):
+
+```yaml
+- uses: Lin214ia/workflows/.github/actions/check-pins@<full commit sha> # v1.1.0
+```
+
 ## Releases: callers pin a SHA
 
 Direction (Harry, chat 2026-10-07): consumers pin a release, not `@main`.
