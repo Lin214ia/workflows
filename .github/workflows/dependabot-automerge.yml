@@ -145,13 +145,20 @@ jobs:
             version-update:semver-major) major=true ;;
           esac
 
+          # Fail closed: arm only for an explicit allow-list. An empty or
+          # unknown update-type (fetch-metadata could not classify the bump)
+          # is never armed.
           auto=false
           if [ "$held" = "false" ]; then
-            if [ "$major" = "false" ]; then
-              auto=true
-            elif [ "$ARM_MAJORS" = "true" ]; then
-              auto=true
-            fi
+            case "$UPDATE_TYPE" in
+              version-update:semver-patch | version-update:semver-minor) auto=true ;;
+              version-update:semver-major)
+                if [ "$ARM_MAJORS" = "true" ]; then auto=true; fi
+                ;;
+              *)
+                echo "::warning title=Auto-merge not armed::Unrecognised update-type '$UPDATE_TYPE' (expected version-update:semver-patch, -minor or -major); failing closed, leaving this PR for review."
+                ;;
+            esac
           fi
 
           {
@@ -220,7 +227,9 @@ jobs:
         run: |
           set -euo pipefail
           marker="major update: left for an agent to review"
-          already="$(gh pr view "$PR_URL" --json comments -q '.comments[].body' | grep -qF "$marker" && echo yes || echo no)"
+          # Capture first: `grep -q` exiting early would SIGPIPE gh under pipefail.
+          comments="$(gh pr view "$PR_URL" --json comments -q '.comments[].body')"
+          if grep -qF "$marker" <<< "$comments"; then already=yes; else already=no; fi
           if [ "$already" = "yes" ]; then
             echo "already flagged, skipping comment"
           else
@@ -235,7 +244,9 @@ jobs:
         run: |
           set -euo pipefail
           marker="held dependency update: left for an agent to review with evidence"
-          already="$(gh pr view "$PR_URL" --json comments -q '.comments[].body' | grep -qF "$marker" && echo yes || echo no)"
+          # Capture first: `grep -q` exiting early would SIGPIPE gh under pipefail.
+          comments="$(gh pr view "$PR_URL" --json comments -q '.comments[].body')"
+          if grep -qF "$marker" <<< "$comments"; then already=yes; else already=no; fi
           if [ "$already" = "yes" ]; then
             echo "already flagged, skipping comment"
           else

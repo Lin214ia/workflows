@@ -183,6 +183,19 @@ class GateStepTest(unittest.TestCase):
         self.assertEqual(proc.outputs["auto"], "true")
         self.assertEqual(proc.outputs["major"], "true")
 
+    def test_empty_update_type_fails_closed(self):
+        for arm_majors in ("false", "true"):
+            proc = self._run("", arm_majors=arm_majors)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertEqual(proc.outputs["auto"], "false")
+            self.assertIn("::warning", proc.stdout)
+
+    def test_unknown_update_type_fails_closed(self):
+        proc = self._run("version-update:something-new")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(proc.outputs["auto"], "false")
+        self.assertIn("::warning", proc.stdout)
+
     def test_hold_pattern_match_is_never_armed(self):
         proc = self._run(
             "version-update:semver-patch",
@@ -244,6 +257,12 @@ class MajorCommentStepTest(unittest.TestCase):
         self.assertIn("pr comment", proc.calls)
         self.assertIn(MAJOR_MARKER, proc.calls)
 
+    def test_does_not_comment_twice_with_large_history(self):
+        """grep -q under pipefail used to SIGPIPE gh and report 'not yet'."""
+        proc = self._run([MAJOR_MARKER] + ["x" * 100000] * 50)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertNotIn("pr comment", proc.calls)
+
     def test_does_not_comment_twice(self):
         proc = self._run([MAJOR_MARKER])
         self.assertEqual(proc.returncode, 0, proc.stderr)
@@ -295,6 +314,12 @@ class HeldCommentStepTest(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertIn("pr comment", proc.calls)
         self.assertIn(HELD_MARKER, proc.calls)
+
+    def test_does_not_comment_twice_with_large_history(self):
+        """grep -q under pipefail used to SIGPIPE gh and report 'not yet'."""
+        proc = self._run([HELD_MARKER] + ["x" * 100000] * 50)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertNotIn("pr comment", proc.calls)
 
     def test_does_not_comment_twice(self):
         proc = self._run([HELD_MARKER])
