@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.1](https://github.com/Lin214ia/workflows/compare/v1.1.0...v1.1.1) (2026-10-08)
+
+
+### Bug Fixes
+
+* **dependabot-automerge:** fail closed on unknown update-type ([#17](https://github.com/Lin214ia/workflows/issues/17)) ([9cc81ae](https://github.com/Lin214ia/workflows/commit/9cc81aee3ce9cedb84b72b71d3d2e497d914b626))
+
 ## [1.1.0](https://github.com/Lin214ia/workflows/compare/v1.0.0...v1.1.0) (2026-10-07)
 
 
