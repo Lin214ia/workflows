@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.2](https://github.com/Lin214ia/workflows/compare/v1.1.1...v1.1.2) (2026-10-16)
+
+
+### Bug Fixes
+
+* **dependabot-automerge:** reflow and validate the App private key before minting ([#19](https://github.com/Lin214ia/workflows/issues/19)) ([00ed1d1](https://github.com/Lin214ia/workflows/commit/00ed1d12779ddd475188b25fb30c05cf35138e35))
+
 ## [1.1.1](https://github.com/Lin214ia/workflows/compare/v1.1.0...v1.1.1) (2026-10-08)
 
 
