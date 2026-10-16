@@ -65,6 +65,7 @@ _MAJOR_COMMENT_SCRIPT = _BLOCKS["Flag major update for review (comment once)"]
 _HELD_COMMENT_SCRIPT = _BLOCKS["Flag held dependency update for review (comment once)"]
 
 _CREDS_SCRIPT = _BLOCKS["Check App credentials for the merge identity"]
+_KEY_SCRIPT = _BLOCKS["Normalise and validate the App private key"]
 
 _PR_URL = "https://example.test/pull/42"
 
@@ -298,6 +299,93 @@ class CredsStepTest(unittest.TestCase):
             self.assertIn("push workflows", proc.stdout)
 
 
+def _make_rsa_key() -> str:
+    """A throwaway PKCS#1 RSA private key, generated fresh per test run."""
+    proc = subprocess.run(
+        ["openssl", "genrsa", "-traditional", "2048"],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    if proc.returncode != 0:
+        raise unittest.SkipTest(f"openssl genrsa unavailable: {proc.stderr[:80]}")
+    return proc.stdout
+
+
+class KeyStepTest(unittest.TestCase):
+    """The key step: reflow a damaged key text, or fail naming the shape."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.key = _make_rsa_key()
+
+    def setUp(self) -> None:
+        self.h = _StepHarness(_KEY_SCRIPT, _GATE_GH_STUB)
+        self.addCleanup(self.h.cleanup)
+
+    def _run(self, key: str) -> subprocess.CompletedProcess:
+        out = self.h.root / "github_output"
+        out.write_text("")
+        proc = self.h.run(APP_PRIVATE_KEY=key, GITHUB_OUTPUT=str(out))
+        lines = out.read_text().splitlines()
+        proc.emitted = ""  # type: ignore[attr-defined]
+        if lines and lines[0].startswith("pem<<"):
+            proc.emitted = "\n".join(lines[1:-1]) + "\n"  # type: ignore[attr-defined]
+        return proc
+
+    def _assert_canonical(self, proc: subprocess.CompletedProcess) -> None:
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertEqual(proc.emitted.strip().splitlines(), self.key.strip().splitlines())
+
+    def test_valid_key_passes_through_unchanged(self):
+        self._assert_canonical(self._run(self.key))
+
+    def test_newlines_flattened_to_spaces_are_restored(self):
+        """`gh secret set --body (cat key)` in fish joins the lines with spaces."""
+        self._assert_canonical(self._run(" ".join(self.key.split())))
+
+    def test_literal_backslash_n_is_restored(self):
+        self._assert_canonical(self._run(self.key.strip().replace("\n", "\\n")))
+
+    def test_crlf_is_restored(self):
+        self._assert_canonical(self._run(self.key.replace("\n", "\r\n")))
+
+    def test_each_reflowed_body_line_is_masked(self):
+        proc = self._run(" ".join(self.key.split()))
+        for line in self.key.splitlines()[1:-1]:
+            if len(line) >= 16:
+                self.assertIn(f"::add-mask::{line}", proc.stdout)
+
+    def test_no_armour_fails_without_echoing_the_value(self):
+        proc = self._run("hunter2-not-a-key")
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("::error", proc.stdout)
+        self.assertIn("No PEM", proc.stdout)
+        self.assertNotIn("hunter2", proc.stdout + proc.stderr)
+        self.assertEqual(proc.emitted, "")
+
+    def test_truncated_key_fails_with_its_length(self):
+        body = "".join(self.key.splitlines()[1:-1])[:300]
+        proc = self._run(f"-----BEGIN RSA PRIVATE KEY-----\n{body}\n-----END RSA PRIVATE KEY-----")
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("truncated", proc.stdout)
+        self.assertNotIn(body[:40], proc.stdout + proc.stderr)
+
+    def test_non_base64_body_fails(self):
+        proc = self._run("-----BEGIN RSA PRIVATE KEY-----\n" + "!" * 700 + "\n-----END RSA PRIVATE KEY-----")
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("not valid base64", proc.stdout)
+
+    def test_well_formed_but_garbage_key_is_rejected_by_openssl(self):
+        body = "QUJD" * 400  # valid base64, not a key
+        proc = self._run(f"-----BEGIN RSA PRIVATE KEY-----\n{body}\n-----END RSA PRIVATE KEY-----")
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("OpenSSL cannot parse", proc.stdout)
+        # ::add-mask:: commands are consumed by the runner, never displayed.
+        shown = [x for x in proc.stdout.splitlines() if not x.startswith("::add-mask::")]
+        self.assertNotIn(body[:40], "\n".join(shown) + proc.stderr)
+
+
 class HeldCommentStepTest(unittest.TestCase):
     def setUp(self) -> None:
         self.h = _StepHarness(_HELD_COMMENT_SCRIPT, _COMMENT_GH_STUB)
@@ -336,6 +424,7 @@ class TestWorkflowShape(unittest.TestCase):
             {
                 "Classify update (patch/minor vs major, hold-patterns)",
                 "Check App credentials for the merge identity",
+                "Normalise and validate the App private key",
                 "Ensure the dependabot-major label exists",
                 "Flag major update for review (comment once)",
                 "Flag held dependency update for review (comment once)",
@@ -383,6 +472,13 @@ class TestWorkflowShape(unittest.TestCase):
         step = step.split("      - name:", 1)[0]
         self.assertIn("steps.app-token.outputs.token", step)
         self.assertIn("gh pr merge --auto --squash", step)
+
+    def test_the_minter_receives_the_normalised_key_not_the_raw_secret(self):
+        text = _WORKFLOW.read_text()
+        step = text.split("      - name: Mint the App token that arms auto-merge", 1)[1]
+        step = step.split("      - name:", 1)[0]
+        self.assertIn("private-key: ${{ steps.key.outputs.pem }}", step)
+        self.assertNotIn("secrets.app-private-key", step)
 
     def test_app_secrets_are_optional(self):
         text = _WORKFLOW.read_text()

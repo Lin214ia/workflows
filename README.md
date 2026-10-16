@@ -87,7 +87,7 @@ jobs:
 | Secret | Required | Notes |
 | --- | --- | --- |
 | `app-id` | no | Id of a GitHub App installed on the caller repo with Contents and Pull requests write. |
-| `app-private-key` | no | That App's private key (PEM). |
+| `app-private-key` | no | That App's private key (PEM). Reflowed and parse-checked before use: a key whose newlines were flattened to spaces or written as literal `\n` is repaired; an unusable one fails with a message naming the shape received (never the value). Set the Dependabot secret with a stdin redirect (`gh secret set NAME --app dependabot -R OWNER/REPO < KEYFILE`). |
 
 Auto-merge is armed with a token minted from this App, so the merge is
 attributed to the App and fires `push` workflows (post-merge CI on `main`,
