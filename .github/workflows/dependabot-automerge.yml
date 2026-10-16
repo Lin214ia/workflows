@@ -183,13 +183,81 @@ jobs:
             echo "::warning title=Auto-merge will use GITHUB_TOKEN::No App credentials reached this job (app-id/app-private-key are empty; for a Dependabot-triggered run they must be DEPENDABOT secrets). The merge will be attributed to github-actions and will NOT trigger push workflows: no post-merge CI on main, no release-please."
           fi
 
+      # A secret store can hand the PEM over with its line structure damaged
+      # (newlines flattened to spaces by shell word-splitting, or written as a
+      # literal backslash-n). create-github-app-token then dies in OpenSSL with
+      # an opaque `DECODER routines::unsupported` that names neither the secret
+      # nor the cause (Lin214ia/soma, 2026-10-16). Reflow the key into canonical
+      # PEM here, and when it still cannot be a key, fail with a message that
+      # says which shape was received. Nothing secret is ever printed: only the
+      # armour label, the body length and pass/fail facts.
+      - name: Normalise and validate the App private key
+        id: key
+        if: steps.gate.outputs.auto == 'true' && steps.creds.outputs.available == 'true'
+        env:
+          APP_PRIVATE_KEY: ${{ secrets.app-private-key }}
+        run: |
+          set -euo pipefail
+
+          fail() {
+            echo "::error title=App private key unusable::$1 Re-set the DEPENDABOT secret from the original key file with a stdin redirect: gh secret set NAME --app dependabot -R OWNER/REPO < KEYFILE (never command substitution or echo)."
+            exit 1
+          }
+
+          # Literal backslash-n becomes whitespace; every whitespace run
+          # (newlines, CRLF, spaces, tabs) collapses to one space.
+          flat="${APP_PRIVATE_KEY//\\n/ }"
+          flat="$(printf '%s' "$flat" | tr -s '[:space:]' ' ')"
+
+          armour='-----BEGIN ([A-Z ]+)-----([^-]*)-----END ([A-Z ]+)-----'
+          if [[ ! "$flat" =~ $armour ]]; then
+            fail "No PEM BEGIN/END armour found in the secret (length ${#APP_PRIVATE_KEY} chars)."
+          fi
+          label="${BASH_REMATCH[1]}"
+          if [ "$label" != "${BASH_REMATCH[3]}" ]; then
+            fail "PEM BEGIN label '$label' does not match its END label."
+          fi
+          body="${BASH_REMATCH[2]// /}"
+
+          if [[ ! "$body" =~ ^[A-Za-z0-9+/]+=*$ ]]; then
+            fail "PEM '$label' body (${#body} chars) is not valid base64."
+          fi
+          # A 2048-bit RSA key is ~1200 base64 chars; far less is a truncated paste.
+          if [ "${#body}" -lt 600 ]; then
+            fail "PEM '$label' body is only ${#body} chars, so the key is truncated."
+          fi
+
+          pem="-----BEGIN ${label}-----"$'\n'"$(printf '%s' "$body" | fold -w 64)"$'\n'"-----END ${label}-----"
+          # Reflowed lines are new strings the runner has not masked yet.
+          while IFS= read -r line; do
+            if [ "${#line}" -ge 16 ] && [[ "$line" != -----* ]]; then
+              echo "::add-mask::$line"
+            fi
+          done <<< "$pem"
+
+          if command -v openssl >/dev/null 2>&1; then
+            if ! printf '%s\n' "$pem" | openssl pkey -noout >/dev/null 2>&1; then
+              fail "PEM '$label' (body ${#body} chars) is well-formed text but OpenSSL cannot parse it as a private key (corrupt, encrypted, or not a key)."
+            fi
+          else
+            echo "::notice::openssl not found on this runner; skipped the parse check."
+          fi
+
+          echo "Private key OK: PEM '$label', body ${#body} chars, reflowed to 64-column lines."
+          delim="PEM_$(head -c 12 /dev/urandom | base64 | tr -dc 'A-Za-z0-9')"
+          {
+            echo "pem<<$delim"
+            printf '%s\n' "$pem"
+            echo "$delim"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Mint the App token that arms auto-merge
         id: app-token
         if: steps.gate.outputs.auto == 'true' && steps.creds.outputs.available == 'true'
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
           app-id: ${{ secrets.app-id }}
-          private-key: ${{ secrets.app-private-key }}
+          private-key: ${{ steps.key.outputs.pem }}
           permission-contents: write
           permission-pull-requests: write
 
